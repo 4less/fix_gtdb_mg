@@ -79,7 +79,7 @@ impl Species {
     }
 
     pub fn get(&mut self, geneid: GeneID) -> &mut Leaks {
-        if geneid >= self.leaks.len() {
+        if geneid >= self.leaks.len() || self.leaks[geneid].is_none() {
             self.leaks.resize_with(geneid + 1, || None);
             self.leaks[geneid] = Some(Leaks::default());
         }
