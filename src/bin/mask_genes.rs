@@ -83,7 +83,8 @@ impl Species {
             self.leaks.resize_with(geneid + 1, || None);
             self.leaks[geneid] = Some(Leaks::default());
         }
-        self.leaks[geneid].as_mut().unwrap()
+        let len = self.leaks.len();
+        self.leaks[geneid].as_mut().expect(&format!("geneid {}, length leaks {}", geneid, len))
     }
 
     pub fn add_correct(&mut self, geneid: GeneID) {
@@ -163,7 +164,6 @@ pub fn get_gene_leaks(args: &Args) -> GeneLeaks {
         // eprintln!("{:?}", sam);
         if !sam.is_aligned() || sam.mapq < args.min_mapq {continue};
 
-    
         let (query_tid, query_gid) = taxid_geneid(&sam.qname).expect("Reference not parseable");
         let (ref_tid, ref_gid) = taxid_geneid(&sam.rname).expect("Reference not parseable");
         let correct = query_tid == ref_tid && query_gid == ref_gid;
