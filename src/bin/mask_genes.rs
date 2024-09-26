@@ -1,51 +1,19 @@
 
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, process::exit};
 
 use clap::Parser;
-use fix_gtdb_mg::common::sam_file_iterator;
+use fix_gtdb_mg::common::{sam_file_iterator, taxid_geneid, Args, GeneID, TaxID};
 
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-#[command(arg_required_else_help(true))]
-#[command(max_term_width = 120)] // term_width sets it fixed, max term_width can be smaller
-pub struct Args {
-    /// Input file (.sam|.sam.gz)
-    #[arg(short = 'i', long = "input", default_value_t = String::default())]
-    pub input: String,
-
-    /// Mapq threshold (filter everything strictly below)
-    #[arg(short = 'm', long = "min_mapq", default_value_t = 4)]
-    pub min_mapq: u8,
-
-    /// Minimum number of genes to keep.
-    #[arg(short = 'g', long = "min_genes", default_value_t = 60)]
-    pub min_genes: i32,
-
-    /// Tolerate this many incoming leaked reads
-    #[arg(short = 'g', long = "genes", default_value_t = 10)]
-    pub max_leaked_reads: i32,
-}
 
 
-pub fn taxid_geneid(token: &str) -> Result<(usize, usize), Box<dyn std::error::Error>> {
-    let mut parts = token.split('_');
-    
-    // Use next() to get the first two parts and check for their existence
-    let first_part = parts.next().ok_or("Missing first part")?;
-    let second_part = parts.next().ok_or("Missing second part")?;
 
-    Ok((first_part.parse()?, second_part.parse()?))
-}
-
-type TaxID = usize;
-type GeneID = usize;
 
 #[derive(Default)]
 pub struct Leaks {
-    pub correct: usize,
-    pub incoming: usize,
-    pub outgoing: usize,
+    pub correct: f64,
+    pub incoming: f64,
+    pub outgoing: f64,
 }
 
 #[derive(Default)]
@@ -58,7 +26,7 @@ impl Display for Species {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = String::default();
 
-        s.push_str(&format!("{}\t{}\t{}\tcorrect", self.id, self.num_good_genes(0), self.num_leaked_on_genes(0)));
+        s.push_str(&format!("{}\t{}\t{}\tcorrect", self.id, self.num_good_genes(0.0), self.num_leaked_on_genes(0.0)));
         self.leaks.iter().skip(1).for_each(|e: &Option<Leaks>| {
             let tmp = match e {
                 Some(e) => { format!("\t{}", e.correct) },
@@ -66,7 +34,7 @@ impl Display for Species {
             };
             s.push_str(&tmp)
         });        
-        s.push_str(&format!("\n{}\t{}\t{}\tincoming", self.id, self.num_good_genes(0), self.num_leaked_on_genes(0)));
+        s.push_str(&format!("\n{}\t{}\t{}\tincoming", self.id, self.num_good_genes(0.0), self.num_leaked_on_genes(0.0)));
         self.leaks.iter().skip(1).for_each(|e| {
             let tmp = match e {
                 Some(e) => { format!("\t{}", e.incoming) },
@@ -74,7 +42,7 @@ impl Display for Species {
             };
             s.push_str(&tmp)
         });        
-        s.push_str(&format!("\n{}\t{}\t{}\toutgoing", self.id, self.num_good_genes(0), self.num_leaked_on_genes(0)));
+        s.push_str(&format!("\n{}\t{}\t{}\toutgoing", self.id, self.num_good_genes(0.0), self.num_leaked_on_genes(0.0)));
         self.leaks.iter().skip(1).for_each(|e| {
             let tmp = match e {
                 Some(e) => { format!("\t{}", e.outgoing) },
@@ -107,21 +75,21 @@ impl Species {
         self.leaks[geneid].as_mut().expect(&format!("geneid {}, length leaks {}", geneid, len))
     }
 
-    pub fn add_correct(&mut self, geneid: GeneID) {
+    pub fn add_correct(&mut self, geneid: GeneID, increment: f64) {
         let leaks = self.get(geneid);
-        leaks.correct += 1;
+        leaks.correct += increment;
     }
 
-    pub fn add_incorrect(&mut self, geneid: GeneID, incoming: bool) {
+    pub fn add_incorrect(&mut self, geneid: GeneID, incoming: bool, increment: f64) {
         let leaks = self.get(geneid);
-        if incoming { leaks.incoming += 1 } else { leaks.outgoing += 1};
+        if incoming { leaks.incoming += increment } else { leaks.outgoing += increment};
     }
 
     pub fn num_genes(&self) -> usize {
         self.leaks.iter().filter(|x| x.is_some()).count()
     }
     
-    pub fn num_leaked_on_genes(&self, threshold: usize) -> usize {
+    pub fn num_leaked_on_genes(&self, threshold: f64) -> usize {
         self.leaks.iter().
             filter(|x| { match x {
                 Some(x) => x.incoming > threshold,
@@ -129,15 +97,15 @@ impl Species {
             }}).count()
     }    
 
-    pub fn total_incoming_leaks(&self, threshold: usize) -> usize {
+    pub fn total_incoming_leaks(&self, threshold: f64) -> f64 {
         self.leaks.iter().
             filter(|x| { match x {
                 Some(x) => x.incoming > threshold,
                 None => false,
-            }}).fold(0, |acc, x| acc + x.as_ref().unwrap().incoming)
+            }}).fold(0.0, |acc, x| acc + x.as_ref().unwrap().incoming)
     }
 
-    pub fn num_good_genes(&self, threshold: usize) -> usize {
+    pub fn num_good_genes(&self, threshold: f64) -> usize {
         self.num_genes() - self.num_leaked_on_genes(threshold)
     }
 
@@ -147,30 +115,102 @@ pub struct GeneLeaks {
     species: HashMap<TaxID, Species>,
 }
 
+// type DirectionalLeakageKey = (TaxID, TaxID);
+
+// pub struct DirectionalLeak {
+
+// }
+
 impl Default for GeneLeaks {
     fn default() -> Self {
         Self { species: Default::default() }
     }
 }
 
+
 impl GeneLeaks {
-    pub fn count_correct(&mut self, species: TaxID, gene: GeneID) {
+    pub fn count_correct(&mut self, species: TaxID, gene: GeneID, increment: f64) {
         let entry = self.species.entry(species).or_insert(Species::new(species));
-        entry.add_correct(gene);
+        entry.add_correct(gene, increment);
     }
 
-    pub fn count_incorrect(&mut self, species: TaxID, gene: GeneID, incoming: bool) {
+    pub fn count_incorrect(&mut self, species: TaxID, gene: GeneID, incoming: bool, increment: f64) {
         let entry = self.species.entry(species).or_insert(Species::new(species));
-        entry.add_incorrect(gene, incoming);
+        entry.add_incorrect(gene, incoming, increment);
     }
 
     pub fn top_incoming(&self) -> Vec<(&TaxID, &Species)> {
         let mut result = self.species.iter().collect::<Vec<(&TaxID, &Species)>>();
 
-        result.sort_by_key(|(_id, s)| { (-(s.num_leaked_on_genes(0) as isize), -(s.total_incoming_leaks(0) as isize)) } );
+        result.sort_by_key(|(_id, s)| { (-(s.num_leaked_on_genes(0.0) as isize), -(s.total_incoming_leaks(0.0) as isize)) } );
 
         result
     }
+}
+
+
+
+pub fn get_species_total(args: &Args) -> HashMap<TaxID, Vec<Option<usize>>> {
+    let mut result = HashMap::default();
+
+    
+    let mut iter = sam_file_iterator(&args.input).expect("Cannot open file");
+
+
+    while let Some(Ok(sam)) = iter.next() {
+        // eprintln!("{:?}", sam);
+        if !sam.is_aligned() || sam.mapq < args.min_mapq {continue};
+
+        let (query_tid, query_gid) = taxid_geneid(&sam.qname).expect("Reference not parseable");
+
+        let entry: &mut Vec<Option<usize>> = result.entry(query_tid).or_insert(Vec::default());
+        if query_gid >= entry.len() || entry[query_gid].is_none() {
+            entry.resize_with(query_gid + 1, || None);
+            entry[query_gid] = Some(0);
+        }
+        *entry[query_gid].as_mut().unwrap() += 1;
+    }
+
+    result
+}
+
+pub fn get_normalized_gene_leaks(args: &Args, total_counts: &HashMap<TaxID, Vec<Option<usize>>>) -> GeneLeaks {
+    let mut result = GeneLeaks::default();
+
+    let mut iter = sam_file_iterator(&args.input).expect("Cannot open file");
+
+
+    while let Some(Ok(sam)) = iter.next() {
+        // eprintln!("{:?}", sam);
+        if !sam.is_aligned() || sam.mapq < args.min_mapq {continue};
+
+        let (query_tid, query_gid) = taxid_geneid(&sam.qname).expect("Reference not parseable");
+        let (ref_tid, ref_gid) = taxid_geneid(&sam.rname).expect("Reference not parseable");
+        let correct = query_tid == ref_tid && query_gid == ref_gid;
+
+        let qt = total_counts.get(&query_tid);
+        let query_total = match qt {
+            Some(qt) => qt[query_gid].unwrap(),
+            None => 0,
+        };
+
+        let rt = total_counts.get(&ref_tid);
+        let ref_total = match qt {
+            Some(rt) => rt[ref_gid].unwrap(),
+            None => 0,
+        };
+
+        match correct {
+            true => result.count_correct(query_tid, query_gid, 1.0 / query_total as f64),
+            false => {
+                result.count_incorrect(ref_tid, ref_gid, true, 1.0 / query_total as f64);
+                result.count_incorrect(query_tid, query_gid, false, 1.0 / ref_total as f64);
+            },
+        }
+    }
+
+    
+    result
 }
 
 
@@ -189,10 +229,10 @@ pub fn get_gene_leaks(args: &Args) -> GeneLeaks {
         let correct = query_tid == ref_tid && query_gid == ref_gid;
 
         match correct {
-            true => result.count_correct(query_tid, query_gid),
+            true => result.count_correct(query_tid, query_gid, 1.0),
             false => {
-                result.count_incorrect(ref_tid, ref_gid, true);
-                result.count_incorrect(query_tid, query_gid, false);
+                result.count_incorrect(ref_tid, ref_gid, true, 1.0);
+                result.count_incorrect(query_tid, query_gid, false, 1.0);
             },
         }
     }
@@ -201,10 +241,15 @@ pub fn get_gene_leaks(args: &Args) -> GeneLeaks {
     result
 }
 
+
 fn main() {
     let args: Args = Args::parse();
     
-    let leaks = get_gene_leaks(&args);
+    let total = get_species_total(&args);
+
+    let leaks = get_normalized_gene_leaks(&args, &total);
+
+    eprintln!("{:?}", total);
 
     for (_id, s) in leaks.top_incoming().iter().rev() {
         println!("{}", s);

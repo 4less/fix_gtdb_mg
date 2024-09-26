@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 clap = "4.5.18"
 flate2 = "1.0.33"
+itertools = "0.13.0"
 #phylotree = "0.1.2"
 phylotree = { git = "https://github.com/4less/phylotree-rs" }
 thiserror = "1.0.64"

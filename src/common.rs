@@ -1,7 +1,48 @@
 use std::{collections::HashMap, ffi::OsStr, fs::File, io::{BufRead, BufReader}, path::Path};
 
+use clap::{command, Parser};
 use flate2::bufread::GzDecoder;
 use thiserror::Error;
+
+use crate::pairwise_leakage::{TinyGeneID, TinyTaxID};
+
+pub type TaxID = usize;
+pub type GeneID = usize;
+
+
+pub fn taxid_geneid(token: &str) -> Result<(usize, usize), Box<dyn std::error::Error>> {
+    let mut parts = token.split('_');
+    
+    // Use next() to get the first two parts and check for their existence
+    let first_part = parts.next().ok_or("Missing first part")?;
+    let second_part = parts.next().ok_or("Missing second part")?;
+
+    Ok((first_part.parse()?, second_part.parse()?))
+}
+
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+#[command(arg_required_else_help(true))]
+#[command(max_term_width = 120)] // term_width sets it fixed, max term_width can be smaller
+pub struct Args {
+    /// Input file (.sam|.sam.gz)
+    #[arg(short = 'i', long = "input", default_value_t = String::default())]
+    pub input: String,
+
+    /// Mapq threshold (filter everything strictly below)
+    #[arg(short = 'm', long = "min_mapq", default_value_t = 4)]
+    pub min_mapq: u8,
+
+    /// Minimum number of genes to keep.
+    #[arg(short = 'g', long = "min_genes", default_value_t = 60)]
+    pub min_genes: i32,
+
+    /// Tolerate this many incoming leaked reads
+    #[arg(short = 'g', long = "genes", default_value_t = 10)]
+    pub max_leaked_reads: i32,
+}
+
 
 /// Custom error type to handle different kinds of errors
 #[derive(Debug, Error)]
@@ -118,4 +159,24 @@ pub fn read_tsv_to_hashmap<P: AsRef<Path>>(filename: P) -> std::io::Result<HashM
     }
 
     Ok(hashmap)
+}
+
+pub struct FromTo {
+    pub query: TinyTaxID,
+    pub reference: TinyTaxID,
+    pub query_gene: TinyGeneID,
+    pub reference_gene: TinyGeneID,
+}
+
+pub fn sam_to_ids(sam: &Sam) -> FromTo {
+    let (query_tid, query_gid) = taxid_geneid(&sam.qname).expect("Reference not parseable");
+    let (ref_tid, ref_gid) = taxid_geneid(&sam.rname).expect("Reference not parseable");
+    let correct = query_tid == ref_tid && query_gid == ref_gid;
+
+    FromTo {
+        query: query_tid as TinyTaxID,
+        reference: ref_tid as TinyTaxID,
+        query_gene: query_gid as TinyGeneID,
+        reference_gene: ref_gid as TinyGeneID,
+    }
 }
