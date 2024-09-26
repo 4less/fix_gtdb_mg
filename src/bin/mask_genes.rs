@@ -1,8 +1,8 @@
 
-use std::{collections::HashMap, fmt::{format, Display}, path::Path};
+use std::{collections::HashMap, fmt::Display};
 
 use clap::Parser;
-use fix_gtdb_mg::common::{sam_file_iterator, Sam};
+use fix_gtdb_mg::common::sam_file_iterator;
 
 
 #[derive(Parser, Debug)]
@@ -56,15 +56,35 @@ pub struct Species {
 
 impl Display for Species {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut s = format!("{}\t{}\t{}", self.id, self.num_good_genes(0), self.num_leaked_on_genes(0));
+        let mut s = String::default();
 
-        self.leaks.iter().enumerate().for_each(|(idx, e)| {
+        s.push_str(&format!("{}\t{}\t{}\tcorrect", self.id, self.num_good_genes(0), self.num_leaked_on_genes(0)));
+        self.leaks.iter().skip(1).for_each(|e: &Option<Leaks>| {
             let tmp = match e {
-                Some(e) => format!("\t{},c:{},i:{},o:{}", idx, e.correct, e.incoming, e.outgoing),
+                Some(e) => { format!("\t{}", e.correct) },
+                None => "\tNone".to_string(),
+            };
+            s.push_str(&tmp)
+        });        
+        s.push_str(&format!("\n{}\t{}\t{}\tincoming", self.id, self.num_good_genes(0), self.num_leaked_on_genes(0)));
+        self.leaks.iter().skip(1).for_each(|e| {
+            let tmp = match e {
+                Some(e) => { format!("\t{}", e.incoming) },
+                None => "\tNone".to_string(),
+            };
+            s.push_str(&tmp)
+        });        
+        s.push_str(&format!("\n{}\t{}\t{}\toutgoing", self.id, self.num_good_genes(0), self.num_leaked_on_genes(0)));
+        self.leaks.iter().skip(1).for_each(|e| {
+            let tmp = match e {
+                Some(e) => { format!("\t{}", e.outgoing) },
                 None => "\tNone".to_string(),
             };
             s.push_str(&tmp)
         });
+
+        
+
 
         write!(f, "{}", s)
     }
@@ -147,7 +167,7 @@ impl GeneLeaks {
     pub fn top_incoming(&self) -> Vec<(&TaxID, &Species)> {
         let mut result = self.species.iter().collect::<Vec<(&TaxID, &Species)>>();
 
-        result.sort_by_key(|(id, s)| { (-(s.num_leaked_on_genes(0) as isize), -(s.total_incoming_leaks(0) as isize)) } );
+        result.sort_by_key(|(_id, s)| { (-(s.num_leaked_on_genes(0) as isize), -(s.total_incoming_leaks(0) as isize)) } );
 
         result
     }
@@ -186,8 +206,9 @@ fn main() {
     
     let leaks = get_gene_leaks(&args);
 
-    for (id, s) in leaks.top_incoming().iter().rev() {
-        eprintln!("{}", s);
+    for (_id, s) in leaks.top_incoming().iter().rev() {
+        println!("{}", s);
+        
     }
 }
 
