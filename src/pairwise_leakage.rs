@@ -30,7 +30,7 @@ pub struct Genes {
 impl Display for Genes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = itertools::join(self.data.iter().skip(1), "\t");
-        write!(f, "{}", s)
+        write!(f, "{}\t{}", self.total(), s)
     }
 }
 
