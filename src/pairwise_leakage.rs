@@ -1,6 +1,6 @@
 use std::{cmp::max, collections::HashMap, fmt::Display, path::Path};
 
-use crate::common::{sam_file_iterator, sam_to_ids, Args, GeneID};
+use crate::{common::{sam_file_iterator, sam_to_ids, Args, GeneID}, utils::file_lines};
 
 
 
@@ -53,16 +53,30 @@ impl NormGenes {
         for (gene, count) in other.data.iter().enumerate() {
             if *count == Genes::EMPTY { continue };
 
+
+
             if gene >= self.data.len() {
                 self.data.resize_with(gene + 1, || Self::EMPTY);
-                self.data[gene] = 0.0;
+            }
+            if self.data[gene] == Self::EMPTY { self.data[gene] = 0.0 };
+
+            let res = *count as f64 / normalizer.data[gene] as f64;
+
+            assert!(res > 0.0);
+
+            if res.is_nan() {
+                eprintln!("Result: {}/{} = {}", *count as f64, normalizer.data[gene] as f64,  *count as f64 / normalizer.data[gene] as f64);
             }
 
-            self.data[gene] += *count as f64 / normalizer.data[gene] as f64;
+            self.data[gene] += res;
         }
     }
     pub fn total(&self) -> f64 {
-        self.data.iter().fold(0.0, |acc, x| acc + if *x == Self::EMPTY { 0.0 } else { *x })
+        let res = self.data.iter().fold(0.0, |acc, x| acc + if *x < 0.0 || *x == std::f64::NAN { 0.0 } else { *x }); //
+        eprintln!("-- {} ... {} ... {:?}", res, res.is_nan(), self.data);
+        assert!(res >= 0.0);
+
+        res
     }
 }
 
@@ -72,9 +86,8 @@ impl Genes {
     pub fn increment(&mut self, gene: GeneID) {
         if gene >= self.data.len() {
             self.data.resize_with(gene + 1, || Self::EMPTY);
-            self.data[gene] = 0;
         }
-
+        if self.data[gene] == Self::EMPTY { self.data[gene] = 0 };
         self.data[gene] += 1
     }
 
@@ -94,13 +107,21 @@ impl Genes {
     pub fn merge_from(&mut self, other: &Self) {
         for (gene, count) in other.data.iter().enumerate() {
             if *count == Self::EMPTY { continue };
+            assert!(*count > 0);
 
             if gene >= self.data.len() {
                 self.data.resize_with(gene + 1, || Self::EMPTY);
-                self.data[gene] = 0;
             }
+            if self.data[gene] == Self::EMPTY { self.data[gene] = 0 };
 
             self.data[gene] += count;
+            assert!(self.data[gene] > 0);
+        }
+    }
+
+    pub fn from_slice(slice: &[isize]) -> Self {
+        Self {
+            data: Vec::from(slice),
         }
     }
 }
@@ -117,7 +138,8 @@ impl Leakage {
 
         let mut res = Leakage::default();
 
-        while let Some(Ok(sam)) = iter.next() {
+        while let Some(sam_res) = iter.next() {
+            let sam = sam_res.expect("Invalid sam");
             if !sam.is_aligned() || sam.mapq < args.min_mapq {continue};
             let fromto = sam_to_ids(&sam);
             
@@ -132,6 +154,28 @@ impl Leakage {
             entry.increment(fromto.reference_gene as GeneID);
         }
         res
+    }
+    
+    pub fn load(args: &Args) -> Self {
+        let mut result = Self::default();
+        let mut tokens = Vec::<String>::new();
+        let mut iter = file_lines(&args.input).expect("Unable to construct line iterator over file");
+        while let Some(Ok(line)) = iter.next() {
+            let mut tokens = line.split("\t").map(|x| x.parse().expect("Cannot parse string into i32")).collect::<Vec<isize>>();
+
+            // eprintln!("{:?}", tokens);
+
+            let from = tokens[0] as u32;
+            let to = tokens[1] as u32;
+
+            eprintln!("{:?}", &tokens[3..]);
+            assert!(&tokens[3..].iter().all(|x| *x != 0));
+
+            let key = LeakagePair::from(from, to);
+            result.map.insert(key, Genes::from_slice(&tokens[3..]));
+        }
+
+        result
     }
 
     pub fn total_outgoing(&self) -> HashMap<TinyTaxID, Genes> {
